@@ -1,0 +1,559 @@
+
+**Intern MERN Stack Coding Challenge - V2**
+
+
+### MERN Stack Coding Challenge
+
+#### Backend Task
+
+1. **Data Source**  
+   - **THIRD PARTY API URL**: `https://s3.amazonaws.com/roxiler.com/product_transaction.json`  
+   - **REQUEST METHOD**: GET  
+   - **RESPONSE FORMAT**: JSON  
+
+   **Task**:  
+   Create an API to initialize the database. Fetch the JSON from the third-party API and initialize the database with seed data. You are free to define your own efficient table/collection structure.
+
+2. **Instruction**  
+   All the APIs below should take `month` (expected value is any month between January to December) as an input and should be matched against the field `dateOfSale`, regardless of the year.
+
+3. **API Requirements**  
+   - **GET: List all transactions**  
+     - API should support search and pagination on product transactions.  
+     - Based on the value of search parameters, it should match search text on `product title/description/price`, and based on the matching result, it should return the product transactions.  
+     - If the search parameter is empty, then based on applied pagination, it should return all the records of that page number.  
+     - Default pagination values will be `page = 1`, `per page = 10`.  
+
+   - **GET: API for statistics**  
+     - Total sale amount of the selected month.  
+     - Total number of sold items in the selected month.  
+     - Total number of unsold items in the selected month.  
+
+   - **GET: API for bar chart**  
+     - The response should contain price range and the number of items in that range for the selected month, regardless of the year:  
+       - `0 - 100`  
+       - `101 - 200`  
+       - `201 - 300`  
+       - `301 - 400`  
+       - `401 - 500`  
+       - `501 - 600`  
+       - `601 - 700`  
+       - `701 - 800`  
+       - `801 - 900`  
+       - `901 - above`  
+
+   - **GET: API for pie chart**  
+     - Find unique categories and the number of items in each category for the selected month, regardless of the year.  
+     - Example:  
+       - X category: 20 items.  
+       - Y category: 5 items.  
+       - Z category: 3 items.  
+
+   - **GET: Combined API**  
+     - Fetch data from all the above APIs, combine the response, and send a final combined JSON response.  
+
+---
+
+#### Frontend Task
+
+By using the above-created APIs, create the following table and charts on a single page. Follow the given mockups, and you can implement your own design to change the look and feel.
+
+1. **Transactions Table**  
+   - Use the transactions listing API to list transactions in the table.  
+   - **Month Dropdown**: Should display months from January to December as options.  
+     - By default, March should be selected.  
+   - Table should list the transactions of the selected month, regardless of the year, using the API.  
+   - **Search Transaction Box**:  
+     - Should take an input.  
+     - If the search text matches any of `title/description/price`, those transactions of the selected month should be displayed.  
+     - If the search box is cleared, the initial list of transactions for the selected month should be displayed.  
+   - Pagination:  
+     - **Next**: Load the next page of data from the API.  
+     - **Previous**: Load the previous page of data from the API.  
+
+2. **Transactions Statistics**  
+   - Use the statistics API to fetch and display:  
+     - Total sales amount.  
+     - Total number of sold items.  
+     - Total number of unsold items.  
+   - Data should be based on the selected month.  
+
+3. **Transactions Bar Chart**  
+   - Use the bar chart API to fetch data for the selected month.  
+   - Chart should display the price range and the number of items in each range.  
+   - The month selected from the dropdown (above the table) should be applied here.  
+
+4. **Transactions Pie Chart**  
+   - Use the pie chart API to fetch data for the selected month.  
+   - Chart should display unique categories and their respective item counts.  
+Let’s break the tasks into **Backend** and **Frontend** for detailed implementation guidance:
+
+---
+
+## **Backend Tasks:**
+
+### 1. **Data Initialization API**
+   - **Objective:** Fetch data from a third-party API and seed the database.
+
+   #### Implementation Steps:
+   1. **Fetch Data from the Third-Party API**  
+      Use `axios` or `node-fetch` to fetch data from the URL: `https://s3.amazonaws.com/roxiler.com/product_transaction.json`.
+   2. **Database Schema Design**  
+      Choose a database (MongoDB for MERN stack).  
+      Suggested schema for `transactions` collection:
+      ```javascript
+      const transactionSchema = new mongoose.Schema({
+          title: String,
+          description: String,
+          price: Number,
+          category: String,
+          dateOfSale: Date,
+          sold: Boolean,
+      });
+      ```
+   3. **Seed the Database**  
+      Save the fetched data into your MongoDB database.
+
+   #### API Code Snippet:
+   ```javascript
+   const fetch = require('node-fetch');
+   const Transaction = require('./models/transaction'); // Import the schema
+
+   const initializeDatabase = async (req, res) => {
+       try {
+           const response = await fetch('https://s3.amazonaws.com/roxiler.com/product_transaction.json');
+           const data = await response.json();
+           await Transaction.insertMany(data);
+           res.status(200).json({ message: 'Database initialized successfully!' });
+       } catch (error) {
+           res.status(500).json({ message: 'Error initializing database', error });
+       }
+   };
+   ```
+
+---
+
+### 2. **API to List Transactions**
+   - **Objective:** List transactions with search and pagination.
+
+   #### Query Logic:
+   - Search: Filter transactions by `title`, `description`, or `price`.
+   - Pagination: Use `page` and `per_page` query parameters.
+
+   #### API Code Snippet:
+   ```javascript
+   const listTransactions = async (req, res) => {
+       const { search = '', page = 1, per_page = 10, month } = req.query;
+
+       try {
+           const regex = new RegExp(search, 'i'); // Case-insensitive search
+           const dateFilter = { $expr: { $eq: [{ $month: '$dateOfSale' }, parseInt(month)] } };
+
+           const filter = search
+               ? { $and: [dateFilter, { $or: [{ title: regex }, { description: regex }, { price: { $regex: regex } }] }] }
+               : dateFilter;
+
+           const transactions = await Transaction.find(filter)
+               .skip((page - 1) * per_page)
+               .limit(parseInt(per_page));
+           const total = await Transaction.countDocuments(filter);
+
+           res.status(200).json({ transactions, total, page, per_page });
+       } catch (error) {
+           res.status(500).json({ message: 'Error fetching transactions', error });
+       }
+   };
+   ```
+
+---
+
+### 3. **Statistics API**
+   - **Objective:** Provide statistics for a selected month.
+
+   #### API Code Snippet:
+   ```javascript
+   const getStatistics = async (req, res) => {
+       const { month } = req.query;
+
+       try {
+           const dateFilter = { $expr: { $eq: [{ $month: '$dateOfSale' }, parseInt(month)] } };
+
+           const totalSales = await Transaction.aggregate([
+               { $match: dateFilter },
+               { $group: { _id: null, totalAmount: { $sum: '$price' } } },
+           ]);
+
+           const soldItems = await Transaction.countDocuments({ ...dateFilter, sold: true });
+           const unsoldItems = await Transaction.countDocuments({ ...dateFilter, sold: false });
+
+           res.status(200).json({
+               totalSales: totalSales[0]?.totalAmount || 0,
+               soldItems,
+               unsoldItems,
+           });
+       } catch (error) {
+           res.status(500).json({ message: 'Error fetching statistics', error });
+       }
+   };
+   ```
+
+---
+
+### 4. **Bar Chart API**
+   - **Objective:** Group data by price ranges for a selected month.
+
+   #### API Code Snippet:
+   ```javascript
+   const getBarChart = async (req, res) => {
+       const { month } = req.query;
+
+       try {
+           const dateFilter = { $expr: { $eq: [{ $month: '$dateOfSale' }, parseInt(month)] } };
+
+           const priceRanges = await Transaction.aggregate([
+               { $match: dateFilter },
+               {
+                   $bucket: {
+                       groupBy: '$price',
+                       boundaries: [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, Infinity],
+                       default: '901-above',
+                       output: { count: { $sum: 1 } },
+                   },
+               },
+           ]);
+
+           res.status(200).json(priceRanges);
+       } catch (error) {
+           res.status(500).json({ message: 'Error fetching bar chart data', error });
+       }
+   };
+   ```
+
+---
+
+### 5. **Pie Chart API**
+   - **Objective:** Find unique categories and count items per category.
+
+   #### API Code Snippet:
+   ```javascript
+   const getPieChart = async (req, res) => {
+       const { month } = req.query;
+
+       try {
+           const dateFilter = { $expr: { $eq: [{ $month: '$dateOfSale' }, parseInt(month)] } };
+
+           const categories = await Transaction.aggregate([
+               { $match: dateFilter },
+               { $group: { _id: '$category', count: { $sum: 1 } } },
+           ]);
+
+           res.status(200).json(categories);
+       } catch (error) {
+           res.status(500).json({ message: 'Error fetching pie chart data', error });
+       }
+   };
+   ```
+
+---
+
+### 6. **Combined API**
+   - Fetch data from the above APIs and combine responses.
+
+---
+
+## **Frontend Tasks:**
+
+1. **Setup**  
+   - Use React.js with `axios` to fetch data from the backend.
+   - Use libraries like `react-chartjs-2` or `recharts` for bar and pie charts.
+
+2. **Transactions Table**
+   - Dropdown for month selection.
+   - Input box for search.
+   - Pagination buttons for Next/Previous.
+
+   #### Component Structure:
+   - `TransactionTable`:
+     - Fetch data based on dropdown, search input, and pagination.
+     - Render table rows dynamically.
+
+3. **Statistics Display**
+   - Create a `StatisticsBox` component.
+   - Fetch and display total sales, sold items, and unsold items.
+
+4. **Bar and Pie Charts**
+   - Use `BarChart` and `PieChart` components.
+   - Fetch and map API data to chart datasets.
+
+   #### Example for Bar Chart:
+   ```javascript
+   import { Bar } from 'react-chartjs-2';
+
+   const BarChart = ({ data }) => {
+       const chartData = {
+           labels: ['0-100', '101-200', '201-300', '301-400', '401-500', '501-600', '601-700', '701-800', '801-900', '901-above'],
+           datasets: [
+               {
+                   label: 'Items',
+                   data: data.map((range) => range.count),
+                   backgroundColor: 'rgba(75, 192, 192, 0.6)',
+               },
+           ],
+       };
+
+       return <Bar data={chartData} />;
+   };
+  ```
+
+
+
+
+## **Step-by-Step Guide**
+
+### **1. Setup the Environment**
+1. **Install Node.js**  
+   Download and install the latest LTS version of [Node.js](https://nodejs.org/).
+
+2. **Initialize Backend**
+   - Create a new folder for the backend:
+     ```bash
+     mkdir backend
+     cd backend
+     npm init -y
+     ```
+   - Install dependencies:
+     ```bash
+     npm install express mongoose dotenv axios cors body-parser
+     npm install --save-dev nodemon
+     ```
+
+3. **Initialize Frontend**
+   - In the project root, create a folder for the frontend:
+     ```bash
+     npx create-react-app frontend
+     cd frontend
+     npm install axios chart.js react-chartjs-2 recharts
+     ```
+
+4. **Folder Structure**
+   ```
+   project/
+   ├── backend/
+   │   ├── models/
+   │   ├── routes/
+   │   ├── controllers/
+   │   ├── .env
+   │   ├── server.js
+   │
+   ├── frontend/
+   │   ├── src/
+   │   │   ├── components/
+   │   │   ├── pages/
+   │   │   ├── App.js
+   │   │   ├── index.js
+   ```
+
+---
+
+### **2. Backend Boilerplate**
+
+#### **Database Connection (`server.js`)**
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const dotenv = require('dotenv');
+
+// Initialize app and configure environment
+dotenv.config();
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// MongoDB connection
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => console.log('MongoDB connected'))
+    .catch((error) => console.error('MongoDB connection error:', error));
+
+// Routes
+const transactionRoutes = require('./routes/transactionRoutes');
+app.use('/api/transactions', transactionRoutes);
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+```
+
+#### **Model (`models/transaction.js`)**
+```javascript
+const mongoose = require('mongoose');
+
+const transactionSchema = new mongoose.Schema({
+    title: String,
+    description: String,
+    price: Number,
+    category: String,
+    dateOfSale: Date,
+    sold: Boolean,
+});
+
+module.exports = mongoose.model('Transaction', transactionSchema);
+```
+
+#### **Routes (`routes/transactionRoutes.js`)**
+```javascript
+const express = require('express');
+const {
+    initializeDatabase,
+    listTransactions,
+    getStatistics,
+    getBarChart,
+    getPieChart,
+    getCombinedData
+} = require('../controllers/transactionController');
+
+const router = express.Router();
+
+router.get('/initialize', initializeDatabase);
+router.get('/', listTransactions);
+router.get('/statistics', getStatistics);
+router.get('/bar-chart', getBarChart);
+router.get('/pie-chart', getPieChart);
+router.get('/combined', getCombinedData);
+
+module.exports = router;
+```
+
+#### **Controller (`controllers/transactionController.js`)**
+This file includes the code snippets I shared earlier for:
+- Data Initialization
+- Listing Transactions
+- Statistics API
+- Bar Chart API
+- Pie Chart API
+- Combined API  
+
+Place all provided backend snippets here.
+
+---
+
+### **3. Frontend Boilerplate**
+
+#### **Frontend App (`src/App.js`)**
+```javascript
+import React, { useState } from 'react';
+import TransactionsTable from './components/TransactionsTable';
+import StatisticsBox from './components/StatisticsBox';
+import BarChart from './components/BarChart';
+import PieChart from './components/PieChart';
+import './App.css';
+
+const App = () => {
+    const [selectedMonth, setSelectedMonth] = useState('3'); // Default March
+
+    const handleMonthChange = (event) => {
+        setSelectedMonth(event.target.value);
+    };
+
+    return (
+        <div className="App">
+            <h1>Transaction Dashboard</h1>
+            <select value={selectedMonth} onChange={handleMonthChange}>
+                {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+                    .map((month, index) => (
+                        <option key={index} value={index + 1}>{month}</option>
+                    ))}
+            </select>
+
+            <StatisticsBox month={selectedMonth} />
+            <TransactionsTable month={selectedMonth} />
+            <BarChart month={selectedMonth} />
+            <PieChart month={selectedMonth} />
+        </div>
+    );
+};
+
+export default App;
+```
+
+#### **Transactions Table (`src/components/TransactionsTable.js`)**
+```javascript
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
+
+const TransactionsTable = ({ month }) => {
+    const [transactions, setTransactions] = useState([]);
+    const [search, setSearch] = useState('');
+    const [page, setPage] = useState(1);
+
+    useEffect(() => {
+        const fetchTransactions = async () => {
+            const response = await axios.get(`http://localhost:5000/api/transactions`, {
+                params: { month, search, page },
+            });
+            setTransactions(response.data.transactions);
+        };
+        fetchTransactions();
+    }, [month, search, page]);
+
+    return (
+        <div>
+            <h2>Transactions</h2>
+            <input
+                type="text"
+                placeholder="Search transactions"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+            />
+            <table>
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Description</th>
+                        <th>Price</th>
+                        <th>Category</th>
+                        <th>Sold</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {transactions.map((txn) => (
+                        <tr key={txn._id}>
+                            <td>{txn.title}</td>
+                            <td>{txn.description}</td>
+                            <td>{txn.price}</td>
+                            <td>{txn.category}</td>
+                            <td>{txn.sold ? 'Yes' : 'No'}</td>
+                            <td>{new Date(txn.dateOfSale).toLocaleDateString()}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+            <button onClick={() => setPage((p) => Math.max(p - 1, 1))}>Previous</button>
+            <button onClick={() => setPage((p) => p + 1)}>Next</button>
+        </div>
+    );
+};
+
+export default TransactionsTable;
+```
+
+#### **Bar Chart (`src/components/BarChart.js`)**
+Refer to the earlier chart snippet provided.
+
+#### **Pie Chart (`src/components/PieChart.js`)**
+Similar to `BarChart`, use data from the pie chart API.
+
+---
+
+### **4. Running the Project**
+- **Backend:**
+   ```bash
+   cd backend
+   npm run dev
+   ```
+- **Frontend:**
+   ```bash
+   cd frontend
+   npm start
+   ```
